@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">NOVA</string>
+    <string name="home_service_label">NOVA Home Button</string>
+    <string name="home_service_description">Brings you back to NOVA whenever the TV opens its built-in home screen. Turn this off at any time to return to the original launcher.</string>
+</resources>
