@@ -15,9 +15,8 @@ surfaces, and spectral violet / blue / cyan / pink lighting.
   installed or removed.
 - **Your own favourites**: hold **OK** (or press **Menu**) on any app, then choose *Add to Favourites*.
   Pinned apps appear after the four hero cards.
-- **Header**: NOVA wordmark, greeting, time (follows the TV's 12/24-hour setting), date, and quick
-  buttons for **Settings**, **Classic** (opens the TV's original launcher) and, until NOVA is set up as
-  Home, **Set as Home**.
+- **Header**: NOVA wordmark, time (follows the TV's 12/24-hour setting), date, a ✦ button for Home
+  setup and a ⚙ button for Settings.
 - **Remote-first**: built for D-pad use. Focused items lift, glow in the app's own colour, show a light
   sheen and a rotating spectral rim, and tint the ambient background. **Back** returns to the top; it
   never closes the launcher.
@@ -49,17 +48,22 @@ See the install section in the session notes, or briefly:
 4. When prompted, allow **Downloader** (or your file app) to *install unknown apps*, then install.
 5. NOVA appears in the TV's app row.
 
-### Making NOVA your Home screen
+### Making NOVA your Home screen (no computer needed)
 
-- **Plain Android TV**: press Home and choose NOVA if you're asked, or set it under Settings → Apps →
-  Default apps → Home app (where the TV offers that).
-- **Google TV (most TCL 2023+ models)**: Google TV doesn't let you choose a different Home app. NOVA
-  includes an optional **NOVA Home Button** accessibility service: Settings → System → Accessibility →
-  NOVA Home Button → On (NOVA's **Set as Home** button opens this screen). When the stock launcher comes
-  to the front, NOVA immediately takes over; you may see the stock launcher for a split second first.
-  Turn the service off to go back to the original launcher. The **Classic** button always opens it.
+Google TV ignores the normal "default Home app" setting, so NOVA does what you'd otherwise do with
+a computer and `adb`. It does this from the TV itself, over the TV's own debugging service:
 
-The original launcher is never removed or disabled.
+1. Settings → System → About → select **Android TV OS build** 7 times (enables Developer options).
+2. Settings → System → Developer options → turn on **USB debugging**.
+3. Open NOVA, select the ✦ button (top right) → **Make NOVA Home**. When the TV asks to allow
+   debugging, tick **Always allow** and choose **Allow**.
+
+NOVA then sets itself as the preferred Home activity and switches off the stock launcher package(s)
+(it lists them before you confirm). It never touches Settings. To undo, open ✦ → **Restore original launcher**.
+
+> ⚠️ Always use **Restore** before uninstalling NOVA, or the TV will have no Home screen. If that
+> ever happens, run `adb shell pm enable com.google.android.apps.tv.launcherx` from a computer
+> (or reinstall NOVA and press Restore).
 
 ## Building locally
 
