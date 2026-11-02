@@ -11,12 +11,13 @@ import android.provider.Settings
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.nova.launcher.adb.HomeTakeover
 import com.nova.launcher.data.AppEntry
 import com.nova.launcher.data.AppRepository
 import com.nova.launcher.data.FavouritesStore
 import com.nova.launcher.data.Featured
 import com.nova.launcher.data.FeaturedSlot
-import com.nova.launcher.service.HomeButtonService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -24,39 +25,49 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class HomeState(
     val loading: Boolean = true,
-    val apps: List<AppEntry> = emptyList(),
+    val tvApps: List<AppEntry> = emptyList(),
+    val otherApps: List<AppEntry> = emptyList(),
     val featured: List<FeaturedSlot> = Featured.entries.map { FeaturedSlot(it, null) },
     val pinned: List<AppEntry> = emptyList(),
     val pinnedPackages: Set<String> = emptySet(),
-    /** True when NOVA is neither the default Home app nor has its Home button service on. */
-    val showHomeSetup: Boolean = false,
-    val hasClassicHome: Boolean = false,
+)
+
+data class SetupState(
+    val novaIsHome: Boolean = false,
+    val stockHomes: List<HomeTakeover.StockHome> = emptyList(),
+    val stockDisabled: Boolean = false,
+    val busy: Boolean = false,
+    val message: String? = null,
+    val isError: Boolean = false,
 )
 
 class HomeViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = AppRepository(app)
     private val favourites = FavouritesStore(app)
+    private val takeover = HomeTakeover(app)
     private val apps = MutableStateFlow<List<AppEntry>?>(null)
-    private val homeInfo = MutableStateFlow(false to false)
     private var lastFingerprint: Set<String> = emptySet()
     private var loadJob: Job? = null
 
-    val state: StateFlow<HomeState> = combine(apps, favourites.pinned, homeInfo) { list, pinned, home ->
+    private val _setup = MutableStateFlow(SetupState())
+    val setup: StateFlow<SetupState> = _setup
+
+    val state: StateFlow<HomeState> = combine(apps, favourites.pinned) { list, pinned ->
         val all = list.orEmpty()
         val featured = Featured.entries.map { FeaturedSlot(it, it.match(all)) }
         val featuredPkgs = featured.mapNotNull { it.app?.packageName }.toSet()
         val byPkg = all.associateBy { it.packageName }
         HomeState(
             loading = list == null,
-            apps = all,
+            tvApps = all.filter { it.isTvApp },
+            otherApps = all.filter { !it.isTvApp },
             featured = featured,
             pinned = pinned.filter { it !in featuredPkgs }.mapNotNull { byPkg[it] },
-            pinnedPackages = pinned.toSet() + featuredPkgs,
-            showHomeSetup = home.first,
-            hasClassicHome = home.second,
+            pinnedPackages = pinned.toSet(),
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, HomeState())
 
@@ -76,13 +87,28 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         refresh(force = true)
     }
 
+    /** All PackageManager work happens off the main thread so returning Home never stutters. */
     fun refresh(force: Boolean = false) {
-        homeInfo.value = computeHomeInfo()
-        val fp = runCatching { repo.fingerprint() }.getOrDefault(emptySet())
-        if (!force && fp == lastFingerprint && apps.value != null) return
-        lastFingerprint = fp
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch { apps.value = repo.loadApps() }
+        if (loadJob?.isActive == true && !force) return
+        loadJob = viewModelScope.launch {
+            val fp = withContext(Dispatchers.IO) { runCatching { repo.fingerprint() }.getOrDefault(emptySet()) }
+            if (force || fp != lastFingerprint || apps.value == null) {
+                lastFingerprint = fp
+                apps.value = repo.loadApps()
+            }
+            refreshSetup()
+        }
+    }
+
+    private suspend fun refreshSetup() {
+        val (isHome, stock) = withContext(Dispatchers.IO) {
+            takeover.isNovaDefaultHome() to takeover.stockHomes()
+        }
+        _setup.value = _setup.value.copy(
+            novaIsHome = isHome,
+            stockHomes = stock,
+            stockDisabled = stock.isNotEmpty() && stock.all { takeover.isDisabled(it.packageName) },
+        )
     }
 
     fun launch(app: AppEntry) { repo.launch(app) }
@@ -93,44 +119,54 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         repo.start(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${app.packageName}")))
     }
 
-    /** Opens the store page search for a favourite that isn't installed yet. */
     fun findApp(featured: Featured) {
         val q = Uri.encode(featured.title)
-        repo.start(Intent(Intent.ACTION_VIEW, Uri.parse("market://search?q=$q&c=apps"))) ||
+        if (!repo.start(Intent(Intent.ACTION_VIEW, Uri.parse("market://search?q=$q&c=apps")))) {
             repo.start(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/search?q=$q&c=apps")))
+        }
     }
 
     fun openSettings() {
         repo.start(Intent(Settings.ACTION_SETTINGS))
     }
 
-    fun openHomeSetup() {
-        repo.start(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) || repo.start(Intent(Settings.ACTION_SETTINGS))
+    fun openDeveloperOptions() {
+        if (!repo.start(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))) {
+            repo.start(Intent(Settings.ACTION_DEVICE_INFO_SETTINGS)) || repo.start(Intent(Settings.ACTION_SETTINGS))
+        }
     }
 
-    /** Hands over to the TV's original launcher (fallback). */
     fun openClassicHome() {
-        val home = repo.otherHomeApps().firstOrNull() ?: return
+        val home = _setup.value.stockHomes.firstOrNull { !takeover.isDisabled(it.packageName) } ?: return
         HomeBypass.active = true
         val intent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_HOME)
-            component = ComponentName(home.activityInfo.packageName, home.activityInfo.name)
+            component = ComponentName(home.packageName, home.activityName)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         if (!repo.start(intent)) HomeBypass.active = false
     }
 
-    private fun computeHomeInfo(): Pair<Boolean, Boolean> {
-        val ctx = getApplication<Application>()
-        val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
-        val defaultHome = runCatching {
-            ctx.packageManager.resolveActivity(homeIntent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
-                ?.activityInfo?.packageName
-        }.getOrNull()
-        val isDefault = defaultHome == ctx.packageName
-        val serviceOn = HomeButtonService.isEnabled(ctx)
-        val hasClassic = runCatching { repo.otherHomeApps().isNotEmpty() }.getOrDefault(false)
-        return (!isDefault && !serviceOn) to hasClassic
+    fun makeNovaHome() = runSetup { takeover.makeNovaHome() }
+
+    fun restoreOriginalHome() = runSetup { takeover.restore() }
+
+    fun clearSetupMessage() {
+        _setup.value = _setup.value.copy(message = null, isError = false)
+    }
+
+    private fun runSetup(action: suspend () -> Result<String>) {
+        if (_setup.value.busy) return
+        _setup.value = _setup.value.copy(busy = true, message = "Connecting… if the TV asks, choose Allow (tick “Always allow”).", isError = false)
+        viewModelScope.launch {
+            val r = action()
+            refreshSetup()
+            _setup.value = _setup.value.copy(
+                busy = false,
+                message = r.getOrNull() ?: r.exceptionOrNull()?.message,
+                isError = r.isFailure,
+            )
+        }
     }
 
     override fun onCleared() {

@@ -1,13 +1,6 @@
 package com.nova.launcher.ui
 
 import android.text.format.DateFormat
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -16,7 +9,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,158 +22,86 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
+private val WordmarkBrush = Brush.linearGradient(listOf(Color(0xFFD4C6FF), Color(0xFF9BB8FF), Color(0xFFA6F6FF), Color(0xFFFFB8EC)))
+
 @Composable
 fun NovaHeader(
-    showHomeSetup: Boolean,
-    hasClassicHome: Boolean,
     onSettings: () -> Unit,
-    onClassicHome: () -> Unit,
-    onHomeSetup: () -> Unit,
+    onSetup: () -> Unit,
+    setupHighlighted: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    // Ticks once per minute, on the minute (not every second).
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
+            delay(60_000 - System.currentTimeMillis() % 60_000 + 50)
             now = System.currentTimeMillis()
-            delay(1000 - now % 1000)
         }
     }
     val locale = Locale.getDefault()
-    val time = remember(now / 60_000) { DateFormat.getTimeFormat(context).format(Date(now)) }
-    val date = remember(now / 60_000) {
-        SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, "EEEEdMMMM"), locale).format(Date(now)).uppercase(locale)
-    }
-    val greeting = remember(now / 600_000) {
-        when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
-            in 5..11 -> "Good morning"
-            in 12..17 -> "Good afternoon"
-            in 18..22 -> "Good evening"
-            else -> "Good night"
-        }
+    val time = remember(now) { DateFormat.getTimeFormat(context).format(Date(now)) }
+    val date = remember(now / 3_600_000) {
+        SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, "EEEEdMMMM"), locale).format(Date(now))
     }
 
-    Column(modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Wordmark()
-                Spacer(Modifier.height(4.dp))
-                BasicText(greeting, style = NovaType.Greeting)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (showHomeSetup) GlassChip("SET AS HOME", Nova.Cyan, onHomeSetup) { c -> drawSpark(c) }
-                if (hasClassicHome) GlassChip("CLASSIC", Nova.Blue, onClassicHome) { c -> drawHouse(c) }
-                GlassChip("SETTINGS", Nova.Violet, onSettings) { c -> drawGear(c) }
-            }
-            Spacer(Modifier.width(28.dp))
-            Column(horizontalAlignment = Alignment.End) {
-                BasicText(time, style = NovaType.Clock)
-                BasicText(date, style = NovaType.Date)
-            }
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        BasicText("NOVA", style = NovaType.Wordmark.copy(brush = WordmarkBrush))
+        Spacer(Modifier.weight(1f))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            RoundButton(if (setupHighlighted) Nova.Cyan else Nova.Violet, onSetup, badge = setupHighlighted) { drawSpark(it) }
+            RoundButton(Nova.Blue, onSettings) { drawGear(it) }
         }
-        Spacer(Modifier.height(14.dp))
-        // Spectral hairline.
-        Box(
-            Modifier.fillMaxWidth().height(1.dp).drawBehind {
-                drawRect(
-                    Brush.horizontalGradient(
-                        0f to Color.Transparent, 0.2f to Nova.Violet.copy(alpha = 0.6f),
-                        0.5f to Nova.Cyan.copy(alpha = 0.6f), 0.8f to Nova.Pink.copy(alpha = 0.5f), 1f to Color.Transparent,
-                    )
-                )
-            }
-        )
+        Spacer(Modifier.width(26.dp))
+        Column(horizontalAlignment = Alignment.End) {
+            BasicText(time, style = NovaType.Clock)
+            BasicText(date, style = NovaType.Date)
+        }
     }
 }
 
-/** "NOVA" in wide-tracked light type, filled with a slowly flowing spectral gradient. */
 @Composable
-private fun Wordmark() {
-    val transition = rememberInfiniteTransition(label = "wordmark")
-    val shift = transition.animateFloat(
-        0f, 1f, infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Restart), label = "shift",
-    )
-    BasicText(
-        "NOVA",
-        style = NovaType.Wordmark,
-        modifier = Modifier
-            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-            .drawWithContent {
-                drawContent()
-                val w = size.width
-                val x = shift.value * w * 2f
-                drawRect(
-                    Brush.linearGradient(
-                        listOf(Color(0xFFC9B6FF), Color(0xFF7FA6FF), Color(0xFF8AF8FF), Color(0xFFFFA8E8), Color(0xFFC9B6FF)),
-                        start = Offset(x - w, 0f), end = Offset(x + w, size.height), tileMode = TileMode.Repeated,
-                    ),
-                    blendMode = BlendMode.SrcIn,
-                )
-            },
-    )
-}
-
-@Composable
-private fun GlassChip(label: String, accent: Color, onClick: () -> Unit, icon: DrawScope.(Color) -> Unit) {
+private fun RoundButton(accent: Color, onClick: () -> Unit, badge: Boolean = false, icon: DrawScope.(Color) -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val press = remember { PressState() }
-    val focus by animateFloatAsState(if (focused) 1f else 0f, tween(220), label = "chip")
-    val scale by animateFloatAsState(if (press.pressed) 0.96f else if (focused) 1.08f else 1f, label = "chipScale")
     GlassSurface(
-        focused = focused, focus = focus, accent = accent, corner = 20.dp,
+        focused = focused, pressed = press.pressed, accent = accent, corner = 22.dp, lift = 1.12f,
         modifier = Modifier
-            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .size(44.dp)
             .onFocusChanged { focused = it.isFocused }
             .dpadActions(press, onClick)
             .focusable(),
     ) {
-        Row(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-            Canvas(Modifier.size(14.dp)) { icon(if (focused) Color.White else Nova.TextMid) }
-            Spacer(Modifier.width(8.dp))
-            BasicText(label, style = NovaType.Chip.copy(color = if (focused) Nova.TextHigh else Nova.TextMid))
+        Canvas(Modifier.size(18.dp).align(Alignment.Center)) { icon(if (focused) Color.White else Nova.TextMid) }
+        if (badge) {
+            Canvas(Modifier.size(7.dp).align(Alignment.TopEnd).padding(0.dp)) { drawCircle(Nova.Cyan) }
         }
     }
 }
 
 private fun DrawScope.drawGear(c: Color) {
     val r = size.minDimension / 2f
-    val stroke = Stroke(width = r * 0.22f, cap = StrokeCap.Round)
-    drawCircle(c, r * 0.42f, style = stroke)
+    drawCircle(c, r * 0.40f, style = Stroke(width = r * 0.20f))
     for (i in 0 until 8) rotate(i * 45f) {
-        drawLine(c, Offset(center.x, center.y - r * 0.72f), Offset(center.x, center.y - r * 0.98f), r * 0.24f, StrokeCap.Round)
+        drawLine(c, Offset(center.x, center.y - r * 0.70f), Offset(center.x, center.y - r * 0.96f), r * 0.24f, StrokeCap.Round)
     }
-}
-
-private fun DrawScope.drawHouse(c: Color) {
-    val w = size.width; val h = size.height
-    val p = Path().apply {
-        moveTo(w * 0.12f, h * 0.48f); lineTo(w * 0.5f, h * 0.12f); lineTo(w * 0.88f, h * 0.48f)
-        moveTo(w * 0.24f, h * 0.40f); lineTo(w * 0.24f, h * 0.88f); lineTo(w * 0.76f, h * 0.88f); lineTo(w * 0.76f, h * 0.40f)
-    }
-    drawPath(p, c, style = Stroke(width = w * 0.11f, cap = StrokeCap.Round))
 }
 
 private fun DrawScope.drawSpark(c: Color) {

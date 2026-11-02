@@ -67,7 +67,7 @@ class AppRepository(private val context: Context) {
         val iconBitmap = iconDrawable?.let { runCatching { it.toBitmap(192, 192) }.getOrNull() }
         val bannerBitmap = bannerDrawable?.let { d ->
             runCatching {
-                val w = 480
+                val w = 400
                 val ratio = if (d.intrinsicWidth > 0 && d.intrinsicHeight > 0)
                     d.intrinsicHeight.toFloat() / d.intrinsicWidth else 9f / 16f
                 d.toBitmap(w, max(1, (w * ratio).roundToInt()))
